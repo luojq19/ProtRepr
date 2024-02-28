@@ -1,0 +1,8 @@
+test_data_file: data/ec/sprot_10_1022_esm2_t33_ec_above_10_single_label_test.pt
+# test_data_file: data/ec/sprot_10_1022_esm2_t33_ec_above_10_single_label_train.pt
+train_data_file: data/ec/sprot_10_1022_esm2_t33_ec_above_10_single_label_train.pt
+label_file: data/ec/swissprot_ec_list_level3.json
+label_level: 3
+model_dir: logs_level3/train_mlp_single_label_CE_level3_2024_02_15__18_39_50_debug
+seed: 0
+batch_size: 512
