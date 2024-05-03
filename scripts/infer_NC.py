@@ -2,10 +2,12 @@ import sys
 sys.path.append('.')
 import torch
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
 from utils import commons
 from datasets.sequence_dataset import SequenceDataset, SingleLabelSequenceDataset
 from models.mlp import MLPModel
+from utils.losses import pairwise_cosine_distance
 
 import argparse, os, json, time, datetime, yaml
 from tqdm import tqdm
@@ -24,7 +26,38 @@ def get_ec2occurance(data_file, label_file, label_level=4):
     
     return ec2occurance, label_list
 
-def infer_NC(model, train_loader, test_loader, label_list, device, logger, log_dir, tag):
+def infer_NC(model, learned_means, test_loader, label_list, device, logger, log_dir, tag, ec2occurance, data_tag='test'):
+    tag = f'_{tag}' if tag != '' else ''
+    test_embeddings, test_labels, test_outputs = [], [], []
+    with torch.no_grad():
+        for data, label in tqdm(test_loader, desc='Infering train data'):
+            data = data.to(device)
+            output, features = model(data)
+            test_embeddings.append(commons.toCPU(features))
+            test_labels.extend(label.tolist())
+            test_outputs.append(commons.toCPU(output))
+    test_embeddings = torch.cat(test_embeddings, dim=0)
+    test_outputs = torch.cat(test_outputs, dim=0)
+    
+    cos_sim = pairwise_cosine_distance(test_embeddings, learned_means)
+    preds = cos_sim.argmin(dim=1)
+    acc = (preds == torch.tensor(test_labels)).float().mean().item()
+    print(preds)
+    # print((preds == 1695).sum(), len(preds))
+    print(torch.tensor(test_labels))
+    # print((torch.tensor(test_labels) == 1695).sum(), len(test_labels))
+    logger.info(f'Accuracy: {acc:.4f}')
+    
+    pred_labels = [label_list[i] for i in preds]
+    gt_labels = [label_list[i] for i in test_labels]
+    level2acc = commons.get_leveled_acc(pred_labels, gt_labels, ec2occurance, log_dir, levels=[10, 30, 100])
+    for level in level2acc:
+        logger.info(f'{level}: {level2acc[level]:.4f}')
+    with open(os.path.join(log_dir, f'level2acc_{data_tag}.json'), 'w') as f:
+        json.dump(level2acc, f)
+    
+
+def infer_NC_old(model, learned_means, train_loader, test_loader, label_list, device, logger, log_dir, tag):
     tag = f'_{tag}' if tag != '' else ''
     train_embeddings, train_labels = [], []
     with torch.no_grad():
@@ -113,8 +146,10 @@ def main():
     # dataset
     trainset = SingleLabelSequenceDataset(train_config.data.train_data_file, train_config.data.label_file, train_config.data.label_name, logger=logger)
     testset = SingleLabelSequenceDataset(config.test_data_file, train_config.data.label_file, train_config.data.label_name, logger=logger)
+    # valset = SingleLabelSequenceDataset(train_config.data.valid_data_file, train_config.data.label_file, train_config.data.label_name, logger=logger)
     train_loader = DataLoader(trainset, batch_size=config.batch_size, shuffle=False)
     test_loader = DataLoader(testset, batch_size=config.batch_size, shuffle=False)
+    # val_loader = DataLoader(valset, batch_size=config.batch_size, shuffle=False)
     train_config.model.out_dim = testset.num_labels
     with open(config.label_file) as f:
         label_list = json.load(f)
@@ -127,9 +162,18 @@ def main():
     logger.info(f'Model loaded from {os.path.join(config.model_dir, "checkpoints", "best_checkpoints.pt")}')
     model.to(args.device)
     model.eval()
+    learned_means = torch.load(os.path.join(config.model_dir, 'checkpoints/means.pt'))
     
     # infer with embeddings
-    infer_NC(model, train_loader, test_loader, label_list, args.device, logger, log_dir, args.tag)
+    ec2occurance, label_list = get_ec2occurance(config.train_data_file, train_config.data.label_file, label_level=train_config.data.label_level)
     
+    logger.info(f'Infering on the training set:')
+    infer_NC(model, learned_means, train_loader, label_list, args.device, logger, log_dir, args.tag, ec2occurance, data_tag='train')
+    
+    # logger.info(f'Infering on the validation set:')
+    # infer_NC(model, learned_means, val_loader, label_list, args.device, logger, log_dir, args.tag, ec2occurance, data_tag='val')
+    
+    logger.info(f'Infering on the test set:')
+    infer_NC(model, learned_means, test_loader, label_list, args.device, logger, log_dir, args.tag, ec2occurance, data_tag='test')
 if __name__ == '__main__':
     main()

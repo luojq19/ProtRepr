@@ -1,0 +1,13 @@
+train_data_file: data/ec/ensemble/sprot_10_1022_esm1b_t33_ec_above_10_single_label_train_val.pt
+test_data_file: data/ec/ensemble/sprot_10_1022_esm1b_t33_ec_above_10_single_label_test.pt
+label_file: data/ec/swissprot_ec_list_above_10.json
+label_name: ec
+dataset_type: SingleLabelSequenceDataset
+label_level: 4
+batch_size: 1_000
+model_dir_list:
+  - logs_ensemble/train_mlp_single_label_NC_deeper_esm1b_for_ensemble__seed_0
+  - logs_ensemble/train_mlp_single_label_NC_deeper_esm1b_for_ensemble__seed_1
+  - logs_ensemble/train_mlp_single_label_NC_deeper_esm1b_for_ensemble__seed_2
+  - logs_ensemble/train_mlp_single_label_NC_deeper_esm1b_for_ensemble__seed_3
+  - logs_ensemble/train_mlp_single_label_NC_deeper_esm1b_for_ensemble__seed_4

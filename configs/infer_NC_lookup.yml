@@ -1,0 +1,6 @@
+model_dir: logs_pfam_new/train_mlp_pfam_new_NC_2024_04_23__16_20_16_emb15000_cutoff_2022-05-25_lr5e-4
+lookup_data: data/pfam_new/swissprot_pfam_by2022-05-25.pt
+test_data: data/pfam_new/swissprot_pfam_after_2022-05-25_filtered.pt
+label_file: data/pfam_new/pfam_labels_by2022-05-25.json
+topk: 1
+ont: pfam

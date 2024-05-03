@@ -1,8 +1,9 @@
-test_data_file: data/ec/sprot_10_1022_esm2_t33_ec_above_10_single_label_test.pt
+test_data_file: data/ec/ensemble/sprot_10_1022_esm1b_t33_ec_above_10_single_label_test.pt
 # test_data_file: data/ec/sprot_10_1022_esm2_t33_ec_above_10_single_label_train.pt
 # test_data_file: data/ec/sprot_10_1022_esm2_t33_ec_above_10_single_label_val.pt
-train_data_file: data/ec/sprot_10_1022_esm2_t33_ec_above_10_single_label_train.pt
+train_data_file: data/ec/ensemble/sprot_10_1022_esm1b_t33_ec_above_10_single_label_train_val.pt
+val_data_file: data/ec/ensemble/sprot_10_1022_esm1b_t33_ec_above_10_single_label_val.pt
 label_file: data/ec/swissprot_ec_list_above_10.json
-model_dir: logs_new/train_mlp_single_label_NC_2024_02_15__20_31_35_0.0005_0.01
+model_dir: logs_debug/train_mlp_single_label_NC_2024_03_21__03_30_49_3layer_1.0_1.0_lr1e-4_wd0
 seed: 0
 batch_size: 512

@@ -58,7 +58,7 @@ def evaluate(pid2pred, pid2gt, ec2occurance, label_list, logger, log_dir):
     ec2acc = {ec: ec2correct[ec] / ec2test_num[ec] for ec in all_ecs}
     acc_list_ec_descending = [ec2acc[ec] for ec in test_ec2train_occurance.keys()]
     test_ec2train_occurance_list = list(test_ec2train_occurance.values())
-    occurance_levels = ['[100, +$\infty$)', '[30, 100)', '[10, 30)', '[0, 10)']
+    occurance_levels = ['[100, +$\infty$)', '[30, 100)', '[0, 30)']
     level2correct, level2test_num = {level: 0 for level in occurance_levels}, {level: 0 for level in occurance_levels}
     for ec in all_ecs:
         occurance = test_ec2train_occurance[ec]
@@ -68,12 +68,12 @@ def evaluate(pid2pred, pid2gt, ec2occurance, label_list, logger, log_dir):
         elif occurance >= 30:
             level2test_num['[30, 100)'] += ec2test_num[ec]
             level2correct['[30, 100)'] += ec2correct[ec]
-        elif occurance >= 10:
-            level2test_num['[10, 30)'] += ec2test_num[ec]
-            level2correct['[10, 30)'] += ec2correct[ec]
+        # elif occurance >= 10:
+        #     level2test_num['[10, 30)'] += ec2test_num[ec]
+        #     level2correct['[10, 30)'] += ec2correct[ec]
         else:
-            level2test_num['[0, 10)'] += ec2test_num[ec]
-            level2correct['[0, 10)'] += ec2correct[ec]
+            level2test_num['[0, 30)'] += ec2test_num[ec]
+            level2correct['[0, 30)'] += ec2correct[ec]
     level2acc = {level: level2correct[level] / level2test_num[level] if level2test_num[level] > 0 else 0 for level in occurance_levels}
     for k, v in level2acc.items():
         logger.info(f'{k}: {v:.4f};')
@@ -107,6 +107,7 @@ def get_args():
     parser.add_argument('--clean_pred_file', type=str, required=True)
     parser.add_argument('--test_data_file', type=str, default=None)
     parser.add_argument('--train_data_file', type=str, default=None)
+    parser.add_argument('--label_file', type=str, default=None)
     parser.add_argument('--tag', type=str, default='')
     
     args = parser.parse_args()
@@ -118,6 +119,7 @@ def main():
     config_name = os.path.basename(args.config)[:os.path.basename(args.config).rfind('.')]
     config.test_data_file = args.test_data_file if args.test_data_file is not None else config.test_data_file
     config.train_data_file = args.train_data_file if args.train_data_file is not None else config.train_data_file
+    config.label_file = args.label_file if args.label_file is not None else config.label_file
     
     # logger
     log_dir = commons.get_new_log_dir(args.logdir, prefix=config_name, tag=args.tag, timestamp=True)

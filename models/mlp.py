@@ -19,13 +19,27 @@ class MLPModel(nn.Module):
                                              nn.ReLU(),
                                              nn.Dropout(self.dropout)))
         self.layers.append(nn.Linear(self.hidden_dims[-1], self.out_dim))
+        self.nc_only = False
         
     def forward(self, x):
         for i in range(self.num_layers - 1):
             x = self.layers[i](x)
         features = x
-        x = self.layers[-1](features)
+        if not self.nc_only:
+            x = self.layers[-1](features)
+        else:
+            x = torch.zeros(x.shape[0], self.out_dim).to(x.device)
         return x, features
+    
+    def freeze_encoder(self):
+        print('Freezing encoder (all layers except the last one)')
+        for layer in self.layers[:-1]:
+            for param in layer.parameters():
+                param.requires_grad = False
+    
+    def enable_nc_only(self):
+        self.nc_only = True
+        print('Enable NC only mode')
     
 if __name__ == '__main__':
     from easydict import EasyDict

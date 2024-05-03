@@ -52,8 +52,8 @@ def get_args():
     
     parser.add_argument('--input', type=str, required=True, help='Input fasta file')
     parser.add_argument('--output', type=str, required=True, help='Output file')
-    parser.add_argument('--model', type=str, default='esm2_t33_650M_UR50D', help='ESM model')
-    parser.add_argument('--batch_size', type=int, default=80, help='Batch size')
+    parser.add_argument('--model', type=str, default='esm1b_t33_650M_UR50S', help='ESM model')
+    parser.add_argument('--batch_size', type=int, default=100, help='Batch size')
     parser.add_argument('--device', type=str, default='cuda:0', help='Device')
     parser.add_argument('--start', type=int, default=None, help='Start index')
     parser.add_argument('--end', type=int, default=None, help='End index')

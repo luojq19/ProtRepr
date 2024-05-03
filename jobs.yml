@@ -1,0 +1,23 @@
+session_name: mlab
+windows:
+  - window_name: dev window
+    layout: tiled
+    # layout: even-horizontal
+    shell_command_before:
+      - conda activate protrepr
+      - cd /work/jiaqi/ProtRepr
+    panes:
+      - shell_command:
+        - export CUDA_VISIBLE_DEVICES=0
+        - python scripts/train_mlp_mlab.py configs/train_mlp_ec_new_NC_mlab_merge.yml --logdir logs_ec_new
+      - shell_command:
+        - export CUDA_VISIBLE_DEVICES=1
+        - python scripts/train_mlp_mlab.py configs/train_mlp_gene3D_new_NC_mlab_merge.yml --logdir logs_gene3D_new
+      - shell_command:
+        - export CUDA_VISIBLE_DEVICES=2
+        - python scripts/train_mlp_mlab.py configs/train_mlp_pfam_new_NC_mlab_merge.yml --logdir logs_pfam_new
+      
+      
+      
+      
+      

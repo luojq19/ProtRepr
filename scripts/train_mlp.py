@@ -2,7 +2,7 @@ import sys
 sys.path.append('.')
 import torch
 from torch.nn import CrossEntropyLoss, BCELoss, BCEWithLogitsLoss
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.optim import Adam, SGD
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
@@ -13,14 +13,16 @@ from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import f1_score
 import matplotlib.pyplot as plt
 
-from datasets.sequence_dataset import SequenceDataset, SingleLabelSequenceDataset
+from datasets.sequence_dataset import SequenceDataset, SingleLabelSequenceDataset, MultiLabelSplitDataset
 from models.mlp import MLPModel
 from utils import commons
 from utils.losses import NCLoss
+from scripts.infer_NC import infer_NC
 
-torch.set_num_threads(1)
+torch.set_num_threads(4)
 
 def get_ec2occurance(data_file, label_file, label_name, label_level):
+    print(f'Loading {data_file} for occurance statistics...')
     data = torch.load(data_file)
     with open(label_file, 'r') as f:
         label_list = json.load(f)
@@ -46,7 +48,7 @@ def evaluate(model, val_loader, criterion, device, use_NC=False):
             # print(label, label.shape)
             # input()
             if use_NC:
-                loss, (sup_loss, nc1_loss, nc2_loss, max_cosine) = criterion(output, label, features)
+                loss, (sup_loss, nc1_loss, nc2_loss, max_cosine, means) = criterion(output, label, features)
                 all_sup_loss.append(commons.toCPU(sup_loss).item())
                 all_nc1_loss.append(commons.toCPU(nc1_loss).item())
                 all_nc2_loss.append(commons.toCPU(nc2_loss).item())
@@ -73,11 +75,14 @@ def train(model, train_loader, val_loader, criterion, optimizer, lr_scheduler, d
     if use_NC and config.start_NC_epoch > 0:
         logger.info(f'Not training NC loss until epoch {config.start_NC_epoch}')
         criterion.set_lambda(0, 0)
+        criterion.freeze_means()
     for epoch in range(config.num_epochs):
+        # input()
         start_epoch = time.time()
         if use_NC and epoch == config.start_NC_epoch:
             logger.info(f'Start training NC loss at epoch {epoch}')
             criterion.set_lambda(config.lambda1, config.lambda2)
+            criterion.unfreeze_means()
             best_val_loss = 1.e10
         if use_NC:
             val_loss, (val_sup_loss, val_nc1_loss, val_nc2_loss, val_max_cosine) = evaluate(model, val_loader, criterion, device, use_NC)
@@ -103,7 +108,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, lr_scheduler, d
             label = label.to(device)
             output, features = model(data)
             if use_NC:
-                loss, (sup_loss, nc1_loss, nc2_loss, max_cosine) = criterion(output, label, features)
+                loss, (sup_loss, nc1_loss, nc2_loss, max_cosine, means) = criterion(output, label, features)
                 sup_losses.append(commons.toCPU(sup_loss).item())
                 nc1_losses.append(commons.toCPU(nc1_loss).item())
                 nc2_losses.append(commons.toCPU(nc2_loss).item())
@@ -114,6 +119,8 @@ def train(model, train_loader, val_loader, criterion, optimizer, lr_scheduler, d
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            # print(criterion.NC1.means)
+            # input()
         mean_loss = torch.tensor(losses).mean().item()
         all_loss.append(mean_loss)
         lr_scheduler.step(mean_loss)
@@ -132,7 +139,8 @@ def train(model, train_loader, val_loader, criterion, optimizer, lr_scheduler, d
             writer.add_scalar('Train/nc1_loss', torch.tensor(nc1_losses).mean().item(), epoch)
             writer.add_scalar('Train/nc2_loss', torch.tensor(nc2_losses).mean().item(), epoch)
             writer.add_scalar('Train/max_cosine', torch.tensor(max_cosines).mean().item(), epoch)
-        
+    if use_NC:
+        torch.save(criterion.NC1.means.detach().cpu(), os.path.join(config.ckpt_dir, 'means.pt'))
     return all_loss, all_val_loss
         
 def predict(model, test_loader, device, log_dir, logger):
@@ -254,6 +262,17 @@ def multi_level_evaluate(model, test_loader, device, logger, ec2occurance, label
     plt.tight_layout()
     plt.savefig(os.path.join(log_dir, f'{label_name}_occurance_acc_10_30_100{tag}.png'), bbox_inches='tight')
 
+class CustomSubset(Subset):
+    def __init__(self, dataset, indices):
+        super(CustomSubset, self).__init__(dataset, indices)
+        self.copy_attributes(dataset)
+
+    def copy_attributes(self, dataset):
+        for attr in dir(dataset):
+            # Make sure we're only copying relevant attributes
+            # You might want to exclude methods or system attributes starting with '__'
+            if not attr.startswith('__') and not callable(getattr(dataset, attr)):
+                setattr(self, attr, getattr(dataset, attr))
 
 def get_args():
     parser = argparse.ArgumentParser(description='Train MLP model')
@@ -265,6 +284,12 @@ def get_args():
     parser.add_argument('--lambda1', type=float, default=None)
     parser.add_argument('--lambda2', type=float, default=None)
     parser.add_argument('--start_NC_epoch', type=int, default=None)
+    parser.add_argument('--lr', type=float, default=None)
+    parser.add_argument('--weight_decay', type=float, default=None)
+    parser.add_argument('--batch_size', type=int, default=None)
+    parser.add_argument('--nc1', type=str, default=None)
+    parser.add_argument('--no_timestamp', action='store_true')
+    parser.add_argument('--random_split_train_val', action='store_true')
     
     args = parser.parse_args()
     return args
@@ -282,9 +307,13 @@ def main():
     config.train.lambda2 = args.lambda2 if args.lambda2 is not None or not hasattr(config.train, 'lambda2') else config.train.lambda2
     config.train.start_NC_epoch = args.start_NC_epoch if args.start_NC_epoch is not None or not hasattr(config.train, 'start_NC_epoch') else config.train.start_NC_epoch
     config.data.label_level = 4 if not hasattr(config.data, 'label_level') else config.data.label_level
+    config.train.lr = args.lr if args.lr is not None or not hasattr(config.train, 'lr') else config.train.lr
+    config.train.weight_decay = args.weight_decay if args.weight_decay is not None or not hasattr(config.train, 'weight_decay') else config.train.weight_decay
+    config.train.batch_size = args.batch_size if args.batch_size is not None or not hasattr(config.train, 'batch_size') else config.train.batch_size
+    config.train.nc1 = args.nc1 if args.nc1 is not None or not hasattr(config.train, 'nc1') else config.train.nc1
 
     # Logging
-    log_dir = commons.get_new_log_dir(args.logdir, prefix=config_name, tag=args.tag, timestamp=True)
+    log_dir = commons.get_new_log_dir(args.logdir, prefix=config_name, tag=args.tag, timestamp=not args.no_timestamp)
     ckpt_dir = os.path.join(log_dir, 'checkpoints')
     os.makedirs(ckpt_dir, exist_ok=True)
     config.train.ckpt_dir = ckpt_dir
@@ -296,10 +325,24 @@ def main():
     logger.info(config)
     
     # Load dataset
-    trainset = globals()[config.data.dataset_type](config.data.train_data_file, config.data.label_file, config.data.label_name, config.data.label_level, logger=logger)
-    validset = globals()[config.data.dataset_type](config.data.valid_data_file, config.data.label_file, config.data.label_name, config.data.label_level, logger=logger)
+    if args.random_split_train_val or not hasattr(config.data, 'valid_data_file'):
+        logger.info('Randomly split train and validation set')
+        all_data = globals()[config.data.dataset_type](config.data.train_data_file, config.data.label_file, config.data.label_name, config.data.label_level, logger=logger)
+        num_train_val = len(all_data)
+        indices = commons.get_random_indices(num_train_val, seed=config.train.seed)
+        train_indices = indices[:int(num_train_val * 0.875)]
+        val_indices = indices[int(num_train_val * 0.875):]
+        all_pids = all_data.pids
+        train_pids, val_pids = [all_pids[i] for i in train_indices], [all_pids[i] for i in val_indices]
+        with open(os.path.join(log_dir, 'train_val_pids.json'), 'w') as f:
+            json.dump({'train': train_pids, 'val': val_pids}, f)
+        trainset = CustomSubset(all_data, train_indices)
+        validset = CustomSubset(all_data, val_indices)
+    else:
+        trainset = globals()[config.data.dataset_type](config.data.train_data_file, config.data.label_file, config.data.label_name, config.data.label_level, logger=logger)
+        validset = globals()[config.data.dataset_type](config.data.valid_data_file, config.data.label_file, config.data.label_name, config.data.label_level, logger=logger)
     testset = globals()[config.data.dataset_type](config.data.test_data_file, config.data.label_file, config.data.label_name, config.data.label_level, logger=logger)
-    train_loader = DataLoader(trainset, batch_size=config.train.batch_size, shuffle=True)
+    train_loader = DataLoader(trainset, batch_size=config.train.batch_size, shuffle=True, pin_memory=True, num_workers=4)
     val_loader = DataLoader(validset, batch_size=config.train.batch_size, shuffle=False)
     test_loader = DataLoader(testset, batch_size=config.train.batch_size, shuffle=False)
     config.model.out_dim = trainset.num_labels
@@ -312,15 +355,21 @@ def main():
     logger.info(model)
     logger.info(f'Trainable parameters: {commons.count_parameters(model)}')
     
+    # get occurance list
+    ec2occurance, label_list = get_ec2occurance(config.data.train_data_file if not hasattr(config.data, 'original_train_data_file') else config.data.original_train_data_file, config.data.label_file, label_name=config.data.label_name, label_level=4)
+    occurance_list = [ec2occurance[ec] for ec in label_list]
+    # print(sum(occurance_list))
+    # input()
+    
     # Train
     if config.train.loss == 'NCLoss':
         logger.info('Using NCLoss')
-        criterion = NCLoss(config.train.sup_criterion, config.train.lambda1, config.train.lambda2, num_classes=config.model.out_dim, feat_dim=config.model.hidden_dims[-1], device=args.device, nc1=config.train.nc1, nc2=config.train.nc2)
+        criterion = NCLoss(sup_criterion=config.train.sup_criterion, lambda1=config.train.lambda1, lambda2=config.train.lambda2, lambda_CE=config.train.lambda_CE, num_classes=config.model.out_dim, feat_dim=config.model.hidden_dims[-1], device=args.device, nc1=config.train.nc1, nc2=config.train.nc2, occurance_list=occurance_list)
         optimizer = globals()[config.train.optimizer](list(model.parameters()) + list(criterion.parameters()), lr=config.train.lr, weight_decay=config.train.weight_decay)
     else:
         criterion = globals()[config.train.loss]()
         optimizer = globals()[config.train.optimizer](model.parameters(), lr=config.train.lr, weight_decay=config.train.weight_decay)
-    lr_scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=config.train.patience-5, verbose=True)
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=config.train.patience-10, verbose=True)
     train(model=model, train_loader=train_loader, val_loader=val_loader, criterion=criterion, optimizer=optimizer, lr_scheduler=lr_scheduler, device=args.device, logger=logger, config=config.train, use_NC=(config.train.loss == 'NCLoss'), writer=writer)
     
     # Test
@@ -334,11 +383,24 @@ def main():
     commons.save_config(config, os.path.join(log_dir, 'config.yml'))
     
     # multi-level evaluation
-    ec2occurance, label_list = get_ec2occurance(config.data.train_data_file, config.data.label_file, label_name=config.data.label_name, label_level=4)
+    ec2occurance, label_list = get_ec2occurance(config.data.train_data_file if not hasattr(config.data, 'original_train_data_file') else config.data.original_train_data_file, config.data.label_file, label_name=config.data.label_name, label_level=4)
     logger.info(f'Multi-level evaluation on validation set:')
     multi_level_evaluate(model, val_loader, args.device, logger, ec2occurance, label_list, log_dir, tag='val', label_name=config.data.label_name)
     logger.info(f'Multi-level evaluation on test set:')
     multi_level_evaluate(model, test_loader, args.device, logger, ec2occurance, label_list, log_dir, tag='test', label_name=config.data.label_name)
+    
+    # infer_NC evaluation
+    learned_means = torch.load(os.path.join(log_dir, 'checkpoints/means.pt'))
+    nc_log_dir = os.path.join(log_dir, 'eval_NC')
+    os.makedirs(nc_log_dir, exist_ok=True)
+    logger.info(f'Infering on the training set:')
+    infer_NC(model, learned_means, train_loader, label_list, args.device, logger, nc_log_dir, args.tag, ec2occurance, data_tag='train')
+    
+    logger.info(f'Infering on the validation set:')
+    infer_NC(model, learned_means, val_loader, label_list, args.device, logger, nc_log_dir, args.tag, ec2occurance, data_tag='val')
+    
+    logger.info(f'Infering on the test set:')
+    infer_NC(model, learned_means, test_loader, label_list, args.device, logger, nc_log_dir, args.tag, ec2occurance, data_tag='test')
     
     end_overall = time.time()
     logger.info(f'Elapsed time: {commons.sec2min_sec(end_overall - start_overall)}')
